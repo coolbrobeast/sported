@@ -1,78 +1,127 @@
+from datetime import datetime
 from flask import Flask, jsonify
 import requests
 
 app = Flask(__name__)
 
-# All major sports endpoints on ESPN
 LEAGUES = [
-    (
-        "NFL",
-        "http://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard",
-    ),
-    (
-        "CFB",
-        (
-            "http://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard"
+    {
+        "name": "NFL",
+        "url": (
+            "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
         ),
-    ),
-    (
-        "NBA",
-        (
-            "http://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
+    },
+    {
+        "name": "NCAA FB",
+        "url": (
+            "https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard"
         ),
-    ),
-    (
-        "MLB",
-        "http://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard",
-    ),
-    (
-        "NHL",
-        "http://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard",
-    ),
+    },
+    {
+        "name": "MLB",
+        "url": (
+            "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard"
+        ),
+    },
+    {
+        "name": "NBA",
+        "url": (
+            "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
+        ),
+    },
+    {
+        "name": "NHL",
+        "url": (
+            "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
+        ),
+    },
+    {
+        "name": "NCAA BB",
+        "url": (
+            "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard"
+        ),
+    },
+    {
+        "name": "WNBA",
+        "url": (
+            "https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/scoreboard"
+        ),
+    },
+    {
+        "name": "MLS",
+        "url": (
+            "https://site.api.espn.com/apis/site/v2/sports/soccer/usa.1/scoreboard"
+        ),
+    },
 ]
 
-current_index = 0
+headers = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,"
+        " like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    )
+}
 
 
-@app.route("/ticker")
-def ticker():
-  global current_index
-  headers = {"User-Agent": "Mozilla/5.0"}
+@app.route("/")
+def get_sports():
+  # Rotate sports every 2 minutes based on system clock
+  total_minutes = int(datetime.utcnow().timestamp() / 60)
+  start_index = (total_minutes // 2) % len(LEAGUES)
 
-  # Loop through leagues to find one with active games today
-  attempts = 0
-  while attempts < len(LEAGUES):
-    league_name, url = LEAGUES[current_index]
-    # Rotate to the next sport for the subsequent request
-    current_index = (current_index + 1) % len(LEAGUES)
-    attempts += 1
+  for attempts in range(len(LEAGUES)):
+    current_index = (start_index + attempts) % len(LEAGUES)
+    league = LEAGUES[current_index]
 
     try:
-      res = requests.get(url, headers=headers, timeout=4)
+      res = requests.get(league["url"], headers=headers, timeout=5)
       if res.status_code == 200:
         data = res.json()
         events = data.get("events", [])
+
         if events:
-          # Grab the first game of this sport
-          game = events[0]
-          competition = game["competitions"][0]
-          competitors = competition["competitors"]
+          target_game = None
 
-          team1 = competitors[0]["team"]["abbreviation"]
-          score1 = competitors[0].get("score", "0")
-          team2 = competitors[1]["team"]["abbreviation"]
-          score2 = competitors[1].get("score", "0")
+          # 1. Look for a live game
+          for game in events:
+            if game["competitions"][0]["status"]["type"]["state"] == "in":
+              target_game = game
+              break
 
-          score_line = f"[{league_name}] {team1} {score1}-{score2} {team2}"
-          status_detail = competition["status"]["type"]["detail"]
+          # 2. If no live game, look for an upcoming game
+          if not target_game:
+            for game in events:
+              if game["competitions"][0]["status"]["type"]["state"] == "pre":
+                target_game = game
+                break
 
-          return jsonify({"line1": score_line, "line2": status_detail})
+          # 3. Fallback to the first game
+          if not target_game:
+            target_game = events[0]
+
+          comp = target_game["competitions"][0]
+          t1 = comp["competitors"][0]["team"]["abbreviation"]
+          t2 = comp["competitors"][1]["team"]["abbreviation"]
+          state = comp["status"]["type"]["state"]
+          status_detail = comp["status"]["type"]["detail"]
+
+          if state == "pre":
+            line1 = f"[{league['name']}] {t1} vs {t2}"
+            line2 = f"Starts: {status_detail}"
+          else:
+            s1 = comp["competitors"][0].get("score", "0")
+            s2 = comp["competitors"][1].get("score", "0")
+            line1 = f"[{league['name']}] {t1} {s1}-{s2} {t2}"
+            line2 = status_detail
+
+          return jsonify({"line1": line1, "line2": line2})
     except Exception as e:
-      print(f"Error fetching {league_name}: {e}")
-      continue
+      print(f"Error fetching {league['name']}: {e}")
 
-  return jsonify({"line1": "ALL SPORTS", "line2": "No Live Games Right Now"})
+  return jsonify(
+      {"line1": "SPORTS TICKER", "line2": "No Active Games Today"}
+  )
 
 
 if __name__ == "__main__":
-  app.run(host="0.0.0.0", port=5000)
+  app.run(host="0.0.0.0", port=10000)
